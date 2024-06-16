@@ -1,0 +1,9 @@
+services:
+  version-checker:
+    build: .
+    volumes:
+      - ./versions:/app/versions
+    environment:
+      - SLACK_TOKEN={{YOUR_TOKEN_GOES_HERE}}
+      - SLACK_CHANNEL={{YOUR_CHANNEL_ID_GOES_HERE}}
+    entrypoint: ["sh", "-c", "while true; do python main.py; sleep 900; done"]
