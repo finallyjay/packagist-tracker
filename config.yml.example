@@ -1,0 +1,6 @@
+# List of Packagist packages to monitor
+# Use the format: vendor/package
+packages:
+  - symfony/symfony
+  - laravel/framework
+  - monolog/monolog
