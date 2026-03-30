@@ -3,7 +3,10 @@ services:
     build: .
     volumes:
       - ./versions:/app/versions
+    env_file:
+      - .env
     environment:
-      - SLACK_TOKEN={{YOUR_TOKEN_GOES_HERE}}
-      - SLACK_CHANNEL={{YOUR_CHANNEL_ID_GOES_HERE}}
-    entrypoint: ["sh", "-c", "while true; do python main.py; sleep 900; done"]
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - CHECK_INTERVAL=${CHECK_INTERVAL:-900}
+    entrypoint: ["sh", "-c", "while true; do python main.py; sleep ${CHECK_INTERVAL:-900}; done"]
+    restart: unless-stopped

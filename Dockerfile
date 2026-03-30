@@ -1,15 +1,24 @@
-# Usa una imagen base oficial de Python
 FROM python:3.9-slim
 
-# Establece el directorio de trabajo
 WORKDIR /app
 
-# Copia el archivo de requisitos (si tienes dependencias externas) y el script a la imagen
-COPY requirements.txt requirements.txt
-COPY main.py main.py
-
-# Instala las dependencias
+# Install dependencies
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Crea el directorio para almacenar las versiones
-RUN mkdir -p versions
+# Copy application files
+COPY main.py .
+COPY config.yml .
+
+# Create versions directory and non-root user
+RUN mkdir -p versions && \
+    addgroup --system app && \
+    adduser --system --ingroup app app && \
+    chown -R app:app /app
+
+USER app
+
+HEALTHCHECK --interval=60s --timeout=10s --start-period=5s --retries=3 \
+    CMD python -c "import requests; requests.get('https://repo.packagist.org', timeout=5)" || exit 1
+
+ENTRYPOINT ["python", "main.py"]
