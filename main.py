@@ -66,11 +66,13 @@ def get_last_version(package_name: str) -> Optional[str]:
 
 
 def save_current_version(package_name: str, version: str) -> None:
-    """Save the current version to the local version file."""
+    """Save the current version to the local version file atomically."""
     os.makedirs(VERSION_DIR, exist_ok=True)
     version_file = os.path.join(VERSION_DIR, f"{package_name.replace('/', '__')}.txt")
-    with open(version_file, "w") as f:
+    tmp_file = f"{version_file}.tmp"
+    with open(tmp_file, "w") as f:
         f.write(version)
+    os.replace(tmp_file, version_file)
 
 
 def send_slack_message(package_name: str, current_version: str, repository_url: str) -> bool:
