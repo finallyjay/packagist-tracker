@@ -100,15 +100,37 @@ class TestSendSlackMessage:
             status=200,
         )
 
-        send_slack_message("monolog/monolog", "3.7.0", "https://github.com/Seldaek/monolog.git")
+        result = send_slack_message(
+            "monolog/monolog", "3.7.0", "https://github.com/Seldaek/monolog.git"
+        )
+        assert result is True
         assert len(responses.calls) == 1
         assert "Bearer xoxb-test-token" in responses.calls[0].request.headers["Authorization"]
 
-    def test_skips_when_no_credentials(self, monkeypatch):
+    @responses.activate
+    def test_returns_false_when_slack_returns_not_ok(self, monkeypatch):
+        monkeypatch.setattr("main.SLACK_TOKEN", "xoxb-test-token")
+        monkeypatch.setattr("main.SLACK_CHANNEL", "C12345")
+
+        responses.add(
+            responses.POST,
+            "https://slack.com/api/chat.postMessage",
+            json={"ok": False, "error": "channel_not_found"},
+            status=200,
+        )
+
+        result = send_slack_message(
+            "monolog/monolog", "3.7.0", "https://github.com/Seldaek/monolog.git"
+        )
+        assert result is False
+
+    def test_returns_false_when_no_credentials(self, monkeypatch):
         monkeypatch.setattr("main.SLACK_TOKEN", None)
         monkeypatch.setattr("main.SLACK_CHANNEL", None)
-        # Should not raise
-        send_slack_message("monolog/monolog", "3.7.0", "https://github.com/Seldaek/monolog.git")
+        result = send_slack_message(
+            "monolog/monolog", "3.7.0", "https://github.com/Seldaek/monolog.git"
+        )
+        assert result is False
 
 
 class TestCheckPackageUpdate:
@@ -134,6 +156,29 @@ class TestCheckPackageUpdate:
         result = check_package_update("monolog/monolog")
         assert result is True
         assert get_last_version("monolog/monolog") == "3.7.0"
+
+    @responses.activate
+    def test_version_not_saved_when_slack_fails(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("main.VERSION_DIR", str(tmp_path))
+        monkeypatch.setattr("main.SLACK_TOKEN", "xoxb-test")
+        monkeypatch.setattr("main.SLACK_CHANNEL", "C12345")
+
+        responses.add(
+            responses.GET,
+            "https://repo.packagist.org/p2/monolog/monolog.json",
+            json=SAMPLE_PACKAGIST_RESPONSE,
+            status=200,
+        )
+        responses.add(
+            responses.POST,
+            "https://slack.com/api/chat.postMessage",
+            json={"ok": False, "error": "invalid_auth"},
+            status=200,
+        )
+
+        result = check_package_update("monolog/monolog")
+        assert result is False
+        assert get_last_version("monolog/monolog") is None
 
     @responses.activate
     def test_no_update_when_version_unchanged(self, tmp_path, monkeypatch):
