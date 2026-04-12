@@ -75,10 +75,6 @@ def save_current_version(package_name: str, version: str) -> None:
 
 def send_slack_message(package_name: str, current_version: str, repository_url: str) -> bool:
     """Send a Slack notification about a new package version. Returns True on success."""
-    if not SLACK_TOKEN or not SLACK_CHANNEL:
-        logger.error("SLACK_TOKEN or SLACK_CHANNEL not configured. Skipping notification.")
-        return False
-
     url = "https://slack.com/api/chat.postMessage"
     headers = {
         "Content-Type": "application/json",
@@ -152,6 +148,10 @@ def check_package_update(package_name: str) -> bool:
 
 def main() -> None:
     """Main entry point: load packages and check each for updates."""
+    if not SLACK_TOKEN or not SLACK_CHANNEL:
+        logger.error("SLACK_TOKEN and SLACK_CHANNEL must be set.")
+        sys.exit(1)
+
     packages = load_packages()
     if not packages:
         logger.info("No packages to track. Exiting.")
