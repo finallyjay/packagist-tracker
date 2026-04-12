@@ -73,11 +73,11 @@ def save_current_version(package_name: str, version: str) -> None:
         f.write(version)
 
 
-def send_slack_message(package_name: str, current_version: str, repository_url: str) -> None:
-    """Send a Slack notification about a new package version."""
+def send_slack_message(package_name: str, current_version: str, repository_url: str) -> bool:
+    """Send a Slack notification about a new package version. Returns True on success."""
     if not SLACK_TOKEN or not SLACK_CHANNEL:
         logger.error("SLACK_TOKEN or SLACK_CHANNEL not configured. Skipping notification.")
-        return
+        return False
 
     url = "https://slack.com/api/chat.postMessage"
     headers = {
@@ -124,10 +124,13 @@ def send_slack_message(package_name: str, current_version: str, repository_url: 
     response_data = response.json()
     if not response_data.get("ok"):
         logger.error("[%s] Slack API error: %s", package_name, response_data.get("error"))
+        return False
+
+    return True
 
 
 def check_package_update(package_name: str) -> bool:
-    """Check a single package for updates. Returns True if updated."""
+    """Check a single package for updates. Returns True if a new version was notified."""
     current_version, repository_url = get_package_info(package_name)
     last_version = get_last_version(package_name)
 
@@ -138,8 +141,9 @@ def check_package_update(package_name: str) -> bool:
         last_version or "never",
     )
 
-    if current_version != last_version:
-        send_slack_message(package_name, current_version, repository_url)
+    if current_version != last_version and send_slack_message(
+        package_name, current_version, repository_url
+    ):
         save_current_version(package_name, current_version)
         return True
 
