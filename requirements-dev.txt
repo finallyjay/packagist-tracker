@@ -6,4 +6,4 @@ ruff==0.15.9
 mypy==1.19.1
 types-requests==2.32.4.20260107
 types-PyYAML==6.0.12.20250915
-pre-commit==3.8.0
+pre-commit==4.3.0
