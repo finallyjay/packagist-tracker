@@ -1,5 +1,6 @@
 """Tests for the Packagist Tracker."""
 
+import pytest
 import responses
 
 from main import (
@@ -7,6 +8,7 @@ from main import (
     get_last_version,
     get_package_info,
     load_packages,
+    main,
     save_current_version,
     send_slack_message,
 )
@@ -124,13 +126,21 @@ class TestSendSlackMessage:
         )
         assert result is False
 
-    def test_returns_false_when_no_credentials(self, monkeypatch):
+
+class TestMainStartupValidation:
+    def test_exits_when_slack_token_missing(self, monkeypatch):
         monkeypatch.setattr("main.SLACK_TOKEN", None)
+        monkeypatch.setattr("main.SLACK_CHANNEL", "C12345")
+        with pytest.raises(SystemExit) as exc_info:
+            main()
+        assert exc_info.value.code == 1
+
+    def test_exits_when_slack_channel_missing(self, monkeypatch):
+        monkeypatch.setattr("main.SLACK_TOKEN", "xoxb-test")
         monkeypatch.setattr("main.SLACK_CHANNEL", None)
-        result = send_slack_message(
-            "monolog/monolog", "3.7.0", "https://github.com/Seldaek/monolog.git"
-        )
-        assert result is False
+        with pytest.raises(SystemExit) as exc_info:
+            main()
+        assert exc_info.value.code == 1
 
 
 class TestCheckPackageUpdate:
