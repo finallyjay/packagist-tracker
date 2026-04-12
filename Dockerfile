@@ -18,7 +18,4 @@ RUN mkdir -p versions && \
 
 USER app
 
-HEALTHCHECK --interval=60s --timeout=10s --start-period=5s --retries=3 \
-    CMD python -c "import requests; requests.get('https://repo.packagist.org', timeout=5)" || exit 1
-
 ENTRYPOINT ["python", "main.py"]
