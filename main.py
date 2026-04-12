@@ -141,10 +141,11 @@ def check_package_update(package_name: str) -> bool:
         last_version or "never",
     )
 
-    if current_version != last_version:
-        if send_slack_message(package_name, current_version, repository_url):
-            save_current_version(package_name, current_version)
-            return True
+    if current_version != last_version and send_slack_message(
+        package_name, current_version, repository_url
+    ):
+        save_current_version(package_name, current_version)
+        return True
 
     return False
 
