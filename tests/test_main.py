@@ -88,6 +88,11 @@ class TestVersionStorage:
         monkeypatch.setattr("main.VERSION_DIR", str(tmp_path))
         assert get_last_version("vendor/nonexistent") is None
 
+    def test_save_leaves_no_tmp_file(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("main.VERSION_DIR", str(tmp_path))
+        save_current_version("vendor/package", "1.2.3")
+        assert not any(p.name.endswith(".tmp") for p in tmp_path.iterdir())
+
 
 class TestSendSlackMessage:
     @responses.activate
