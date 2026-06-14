@@ -4,7 +4,6 @@ import json
 import logging
 import os
 import sys
-from typing import Optional
 
 import requests
 import yaml
@@ -56,7 +55,7 @@ def get_package_info(package_name: str) -> tuple[str, str]:
     return current_version, repository_url
 
 
-def get_last_version(package_name: str) -> Optional[str]:
+def get_last_version(package_name: str) -> str | None:
     """Read the last known version from the local version file."""
     version_file = os.path.join(VERSION_DIR, f"{package_name.replace('/', '__')}.txt")
     if not os.path.exists(version_file):

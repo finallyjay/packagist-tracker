@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/finallyjay/packagist-tracker/actions/workflows/ci.yml/badge.svg)](https://github.com/finallyjay/packagist-tracker/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.14+](https://img.shields.io/badge/python-3.14+-blue.svg)](https://www.python.org/downloads/)
 
 Monitor PHP package versions on [Packagist](https://packagist.org) and receive Slack notifications when new versions are released.
 
