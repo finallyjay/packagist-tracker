@@ -1,5 +1,7 @@
 """Tests for the Packagist Tracker."""
 
+from pathlib import Path
+
 import pytest
 import responses
 
@@ -28,23 +30,23 @@ SAMPLE_PACKAGIST_RESPONSE = {
 
 
 class TestLoadPackages:
-    def test_loads_packages_from_yaml(self, tmp_path):
+    def test_loads_packages_from_yaml(self, tmp_path: Path) -> None:
         config = tmp_path / "config.yml"
         config.write_text("packages:\n  - monolog/monolog\n  - symfony/symfony\n")
         result = load_packages(str(config))
         assert result == ["monolog/monolog", "symfony/symfony"]
 
-    def test_returns_empty_when_file_missing(self, tmp_path):
+    def test_returns_empty_when_file_missing(self, tmp_path: Path) -> None:
         result = load_packages(str(tmp_path / "nonexistent.yml"))
         assert result == []
 
-    def test_returns_empty_when_no_packages_key(self, tmp_path):
+    def test_returns_empty_when_no_packages_key(self, tmp_path: Path) -> None:
         config = tmp_path / "config.yml"
         config.write_text("other_key: value\n")
         result = load_packages(str(config))
         assert result == []
 
-    def test_returns_empty_when_packages_is_empty(self, tmp_path):
+    def test_returns_empty_when_packages_is_empty(self, tmp_path: Path) -> None:
         config = tmp_path / "config.yml"
         config.write_text("packages: []\n")
         result = load_packages(str(config))
@@ -53,7 +55,7 @@ class TestLoadPackages:
 
 class TestGetPackageInfo:
     @responses.activate
-    def test_returns_version_and_url(self):
+    def test_returns_version_and_url(self) -> None:
         responses.add(
             responses.GET,
             "https://repo.packagist.org/p2/monolog/monolog.json",
@@ -65,7 +67,7 @@ class TestGetPackageInfo:
         assert url == "https://github.com/Seldaek/monolog.git"
 
     @responses.activate
-    def test_raises_on_http_error(self):
+    def test_raises_on_http_error(self) -> None:
         responses.add(
             responses.GET,
             "https://repo.packagist.org/p2/invalid/package.json",
@@ -79,16 +81,18 @@ class TestGetPackageInfo:
 
 
 class TestVersionStorage:
-    def test_save_and_read_version(self, tmp_path, monkeypatch):
+    def test_save_and_read_version(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("main.VERSION_DIR", str(tmp_path))
         save_current_version("vendor/package", "1.2.3")
         assert get_last_version("vendor/package") == "1.2.3"
 
-    def test_get_last_version_returns_none_when_missing(self, tmp_path, monkeypatch):
+    def test_get_last_version_returns_none_when_missing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setattr("main.VERSION_DIR", str(tmp_path))
         assert get_last_version("vendor/nonexistent") is None
 
-    def test_save_leaves_no_tmp_file(self, tmp_path, monkeypatch):
+    def test_save_leaves_no_tmp_file(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("main.VERSION_DIR", str(tmp_path))
         save_current_version("vendor/package", "1.2.3")
         assert not any(p.name.endswith(".tmp") for p in tmp_path.iterdir())
@@ -96,7 +100,7 @@ class TestVersionStorage:
 
 class TestSendSlackMessage:
     @responses.activate
-    def test_sends_message_successfully(self, monkeypatch):
+    def test_sends_message_successfully(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("main.SLACK_TOKEN", "xoxb-test-token")
         monkeypatch.setattr("main.SLACK_CHANNEL", "C12345")
 
@@ -115,7 +119,7 @@ class TestSendSlackMessage:
         assert "Bearer xoxb-test-token" in responses.calls[0].request.headers["Authorization"]
 
     @responses.activate
-    def test_returns_false_when_slack_returns_not_ok(self, monkeypatch):
+    def test_returns_false_when_slack_returns_not_ok(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("main.SLACK_TOKEN", "xoxb-test-token")
         monkeypatch.setattr("main.SLACK_CHANNEL", "C12345")
 
@@ -133,14 +137,14 @@ class TestSendSlackMessage:
 
 
 class TestMainStartupValidation:
-    def test_exits_when_slack_token_missing(self, monkeypatch):
+    def test_exits_when_slack_token_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("main.SLACK_TOKEN", None)
         monkeypatch.setattr("main.SLACK_CHANNEL", "C12345")
         with pytest.raises(SystemExit) as exc_info:
             main()
         assert exc_info.value.code == 1
 
-    def test_exits_when_slack_channel_missing(self, monkeypatch):
+    def test_exits_when_slack_channel_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("main.SLACK_TOKEN", "xoxb-test")
         monkeypatch.setattr("main.SLACK_CHANNEL", None)
         with pytest.raises(SystemExit) as exc_info:
@@ -150,7 +154,7 @@ class TestMainStartupValidation:
 
 class TestCheckPackageUpdate:
     @responses.activate
-    def test_detects_new_version(self, tmp_path, monkeypatch):
+    def test_detects_new_version(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("main.VERSION_DIR", str(tmp_path))
         monkeypatch.setattr("main.SLACK_TOKEN", "xoxb-test")
         monkeypatch.setattr("main.SLACK_CHANNEL", "C12345")
@@ -173,7 +177,9 @@ class TestCheckPackageUpdate:
         assert get_last_version("monolog/monolog") == "3.7.0"
 
     @responses.activate
-    def test_version_not_saved_when_slack_fails(self, tmp_path, monkeypatch):
+    def test_version_not_saved_when_slack_fails(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setattr("main.VERSION_DIR", str(tmp_path))
         monkeypatch.setattr("main.SLACK_TOKEN", "xoxb-test")
         monkeypatch.setattr("main.SLACK_CHANNEL", "C12345")
@@ -196,7 +202,9 @@ class TestCheckPackageUpdate:
         assert get_last_version("monolog/monolog") is None
 
     @responses.activate
-    def test_no_update_when_version_unchanged(self, tmp_path, monkeypatch):
+    def test_no_update_when_version_unchanged(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setattr("main.VERSION_DIR", str(tmp_path))
 
         # Pre-save the current version
