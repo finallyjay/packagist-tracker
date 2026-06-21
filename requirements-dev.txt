@@ -5,5 +5,5 @@ responses==0.26.1
 ruff==0.15.17
 mypy==2.1.0
 types-requests==2.32.4.20260107
-types-PyYAML==6.0.12.20250915
+types-PyYAML==6.0.12.20260518
 pre-commit==4.6.0
