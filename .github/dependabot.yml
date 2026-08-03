@@ -15,10 +15,14 @@ updates:
     schedule:
       interval: weekly
 
-  # Keeps .pre-commit-config.yaml hook revs in step with the pins in
-  # requirements-dev.txt. Without this, pip bumps land on their own and the
-  # hooks drift, so pre-commit lints and type-checks with different versions
-  # than CI does.
+  # Without this, .pre-commit-config.yaml is never updated at all and its hook
+  # revs fall arbitrarily far behind the pins in requirements-dev.txt — which
+  # is how #53 and #49 ended up blocked.
+  #
+  # Note this does not keep the two in lockstep: pip and pre-commit are
+  # separate ecosystems and Dependabot raises a PR per ecosystem, so the revs
+  # and the pins can still diverge between merges. Checking that ruff/mypy
+  # match on both sides is still a manual step at review time.
   - package-ecosystem: pre-commit
     directory: "/"
     schedule:
