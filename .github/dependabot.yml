@@ -14,3 +14,12 @@ updates:
     directory: "/"
     schedule:
       interval: weekly
+
+  # Keeps .pre-commit-config.yaml hook revs in step with the pins in
+  # requirements-dev.txt. Without this, pip bumps land on their own and the
+  # hooks drift, so pre-commit lints and type-checks with different versions
+  # than CI does.
+  - package-ecosystem: pre-commit
+    directory: "/"
+    schedule:
+      interval: weekly
