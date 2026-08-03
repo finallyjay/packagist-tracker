@@ -14,3 +14,16 @@ updates:
     directory: "/"
     schedule:
       interval: weekly
+
+  # Without this, .pre-commit-config.yaml is never updated at all and its hook
+  # revs fall arbitrarily far behind the pins in requirements-dev.txt — which
+  # is how #53 and #49 ended up blocked.
+  #
+  # Note this does not keep the two in lockstep: pip and pre-commit are
+  # separate ecosystems and Dependabot raises a PR per ecosystem, so the revs
+  # and the pins can still diverge between merges. Checking that ruff/mypy
+  # match on both sides is still a manual step at review time.
+  - package-ecosystem: pre-commit
+    directory: "/"
+    schedule:
+      interval: weekly
