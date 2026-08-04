@@ -70,6 +70,16 @@ packages:
 docker compose up -d
 ```
 
+`config.yml` is mounted read-only into the container instead of being baked
+into the image, so you can edit your tracked packages on the host and restart
+the container to pick up changes. Version state is persisted through the
+`./versions` bind mount.
+
+> **Note on permissions:** the container runs as a non-root `app` user. If the
+> host `./versions` directory is owned by another user, the container may not be
+> able to write to it. Make sure the directory is writable by the container
+> user (for example `chmod 777 ./versions`, or `chown` it to a matching UID).
+
 ### Configuration options
 
 | Variable         | Description                          | Default |
