@@ -2,6 +2,11 @@ services:
   version-checker:
     build: .
     volumes:
+      # Config is mounted read-only instead of baked into the image.
+      - ./config.yml:/app/config.yml:ro
+      # Persisted version state. With the non-root "app" user in the image,
+      # the host ./versions directory may need permissions that allow that
+      # user to write (e.g. `chmod 777 ./versions` or matching UID ownership).
       - ./versions:/app/versions
     env_file:
       - .env

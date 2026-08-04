@@ -53,8 +53,5 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Copy example config for build
-        run: cp config.yml.example config.yml
-
       - name: Build Docker image
         run: docker build -t packagist-tracker .

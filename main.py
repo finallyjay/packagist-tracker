@@ -1,12 +1,13 @@
 """Packagist Tracker - Monitor PHP package versions and notify via Slack."""
 
-import json
 import logging
 import os
 import sys
 
 import requests
 import yaml
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 # Logging configuration
 logging.basicConfig(
@@ -18,6 +19,26 @@ logger = logging.getLogger(__name__)
 
 # Packagist API base URL
 PACKAGIST_API_URL = "https://repo.packagist.org/p2/{}.json"
+
+
+def _build_session() -> requests.Session:
+    """Create a requests Session with retries for transient network failures."""
+    session = requests.Session()
+    retry = Retry(
+        total=3,
+        backoff_factor=0.5,
+        status_forcelist=(429, 500, 502, 503, 504),
+        allowed_methods=frozenset({"GET", "POST"}),
+        raise_on_status=False,
+    )
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return session
+
+
+# Shared HTTP session with retry/backoff for Packagist and Slack requests
+SESSION = _build_session()
 
 # Directory to store package versions
 VERSION_DIR = os.getenv("VERSION_DIR", "versions")
@@ -34,7 +55,17 @@ def load_packages(config_path: str = "config.yml") -> list[str]:
         return []
 
     with open(config_path) as f:
-        config = yaml.safe_load(f)
+        try:
+            config = yaml.safe_load(f) or {}
+        except yaml.YAMLError as e:
+            logger.error("Failed to parse config file '%s': %s", config_path, e)
+            return []
+
+    if not isinstance(config, dict):
+        logger.warning(
+            "Config file '%s' is not a valid mapping. No packages to track.", config_path
+        )
+        return []
 
     packages: list[str] = config.get("packages", [])
     if not packages:
@@ -45,7 +76,7 @@ def load_packages(config_path: str = "config.yml") -> list[str]:
 def get_package_info(package_name: str) -> tuple[str, str]:
     """Fetch the latest version and repository URL from Packagist."""
     url = PACKAGIST_API_URL.format(package_name)
-    response = requests.get(url, timeout=30)
+    response = SESSION.get(url, timeout=30)
     response.raise_for_status()
 
     data = response.json()
@@ -115,7 +146,7 @@ def send_slack_message(package_name: str, current_version: str, repository_url: 
     }
 
     logger.info("[%s] Sending Slack notification", package_name)
-    response = requests.post(url, headers=headers, data=json.dumps(payload), timeout=30)
+    response = SESSION.post(url, headers=headers, json=payload, timeout=30)
     response.raise_for_status()
 
     response_data = response.json()
@@ -160,16 +191,24 @@ def main() -> None:
 
     logger.info("Checking %d package(s) for updates...", len(packages))
     updated = 0
+    failed = 0
     for package in packages:
         try:
             if check_package_update(package):
                 updated += 1
         except requests.exceptions.RequestException as e:
+            failed += 1
             logger.error("[%s] HTTP error: %s", package, e)
         except (KeyError, IndexError) as e:
+            failed += 1
             logger.error("[%s] Error parsing Packagist response: %s", package, e)
 
     logger.info("Done. %d package(s) updated.", updated)
+
+    # Signal failure to monitoring when every package check failed.
+    if failed and failed == len(packages):
+        logger.error("All %d package(s) failed to check.", failed)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

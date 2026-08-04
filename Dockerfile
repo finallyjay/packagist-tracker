@@ -6,9 +6,10 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application files
+# Copy application code only. config.yml is provided at runtime as a
+# read-only bind mount (see docker-compose.yml) so it is never baked into
+# the image.
 COPY main.py .
-COPY config.yml .
 
 # Create versions directory and non-root user
 RUN mkdir -p versions && \

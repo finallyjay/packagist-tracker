@@ -4,8 +4,10 @@ from pathlib import Path
 
 import pytest
 import responses
+from requests.adapters import HTTPAdapter
 
 from main import (
+    SESSION,
     check_package_update,
     get_last_version,
     get_package_info,
@@ -49,6 +51,30 @@ class TestLoadPackages:
     def test_returns_empty_when_packages_is_empty(self, tmp_path: Path) -> None:
         config = tmp_path / "config.yml"
         config.write_text("packages: []\n")
+        result = load_packages(str(config))
+        assert result == []
+
+    def test_returns_empty_when_file_is_empty(self, tmp_path: Path) -> None:
+        config = tmp_path / "config.yml"
+        config.write_text("")
+        result = load_packages(str(config))
+        assert result == []
+
+    def test_returns_empty_when_file_is_only_comments(self, tmp_path: Path) -> None:
+        config = tmp_path / "config.yml"
+        config.write_text("# just a comment\n")
+        result = load_packages(str(config))
+        assert result == []
+
+    def test_returns_empty_on_malformed_yaml(self, tmp_path: Path) -> None:
+        config = tmp_path / "config.yml"
+        config.write_text("packages: [unclosed\n")
+        result = load_packages(str(config))
+        assert result == []
+
+    def test_returns_empty_when_top_level_is_not_a_mapping(self, tmp_path: Path) -> None:
+        config = tmp_path / "config.yml"
+        config.write_text("- monolog/monolog\n")
         result = load_packages(str(config))
         assert result == []
 
@@ -219,3 +245,72 @@ class TestCheckPackageUpdate:
 
         result = check_package_update("monolog/monolog")
         assert result is False
+
+
+class TestSessionRetries:
+    def test_session_mounts_retry_adapters(self) -> None:
+        for prefix in ("https://", "http://"):
+            adapter = SESSION.get_adapter(prefix)
+            assert isinstance(adapter, HTTPAdapter)
+            retries = adapter.max_retries
+            assert retries.total == 3
+            assert retries.backoff_factor > 0
+            assert retries.status_forcelist is not None
+            assert 429 in retries.status_forcelist
+            assert 503 in retries.status_forcelist
+
+    def test_session_retries_on_idempotent_and_post_methods(self) -> None:
+        adapter = SESSION.get_adapter("https://")
+        assert isinstance(adapter, HTTPAdapter)
+        retries = adapter.max_retries
+        assert retries.allowed_methods is not None
+        assert "GET" in retries.allowed_methods
+        assert "POST" in retries.allowed_methods
+
+
+class TestMainExitCode:
+    @responses.activate
+    def test_exits_nonzero_when_all_packages_fail(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("main.SLACK_TOKEN", "xoxb-test")
+        monkeypatch.setattr("main.SLACK_CHANNEL", "C12345")
+        monkeypatch.setattr("main.load_packages", lambda: ["vendor/package"])
+
+        responses.add(
+            responses.GET,
+            "https://repo.packagist.org/p2/vendor/package.json",
+            status=500,
+        )
+
+        with pytest.raises(SystemExit) as exc_info:
+            main()
+        assert exc_info.value.code == 1
+
+    @responses.activate
+    def test_does_not_exit_when_some_packages_succeed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("main.VERSION_DIR", str(tmp_path))
+        monkeypatch.setattr("main.SLACK_TOKEN", "xoxb-test")
+        monkeypatch.setattr("main.SLACK_CHANNEL", "C12345")
+        monkeypatch.setattr("main.load_packages", lambda: ["monolog/monolog", "vendor/broken"])
+
+        responses.add(
+            responses.GET,
+            "https://repo.packagist.org/p2/monolog/monolog.json",
+            json=SAMPLE_PACKAGIST_RESPONSE,
+            status=200,
+        )
+        responses.add(
+            responses.POST,
+            "https://slack.com/api/chat.postMessage",
+            json={"ok": True},
+            status=200,
+        )
+        responses.add(
+            responses.GET,
+            "https://repo.packagist.org/p2/vendor/broken.json",
+            status=500,
+        )
+
+        # Should complete without raising SystemExit.
+        main()
