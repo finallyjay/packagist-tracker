@@ -67,7 +67,27 @@ def load_packages(config_path: str = "config.yml") -> list[str]:
         )
         return []
 
-    packages: list[str] = config.get("packages", [])
+    raw_packages: object = config.get("packages", [])
+    if not isinstance(raw_packages, list):
+        logger.error(
+            "Invalid 'packages' value in '%s': expected a list, got %s. No packages to track.",
+            config_path,
+            type(raw_packages).__name__,
+        )
+        return []
+
+    packages: list[str] = []
+    for item in raw_packages:
+        if isinstance(item, str):
+            packages.append(item)
+        else:
+            logger.warning(
+                "Ignoring invalid package entry in '%s': %r (expected a string, got %s).",
+                config_path,
+                item,
+                type(item).__name__,
+            )
+
     if not packages:
         logger.warning("No packages defined in '%s'.", config_path)
     return packages
