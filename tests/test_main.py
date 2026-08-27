@@ -187,11 +187,50 @@ class TestGetPackageInfo:
             "https://repo.packagist.org/p2/invalid/package.json",
             status=404,
         )
-        try:
+        with pytest.raises(requests.HTTPError):
             get_package_info("invalid/package")
-            raise AssertionError("Should have raised")
-        except Exception:
-            pass
+
+    @responses.activate
+    def test_raises_key_error_when_source_missing(self) -> None:
+        response = {
+            "packages": {
+                "vendor/package": [
+                    {"version": "1.0.0"},  # no "source" key
+                ]
+            }
+        }
+        responses.add(
+            responses.GET,
+            "https://repo.packagist.org/p2/vendor/package.json",
+            json=response,
+            status=200,
+        )
+        with pytest.raises(KeyError):
+            get_package_info("vendor/package")
+
+    @responses.activate
+    def test_raises_index_error_when_versions_list_is_empty(self) -> None:
+        response: dict[str, dict[str, list[object]]] = {"packages": {"vendor/package": []}}
+        responses.add(
+            responses.GET,
+            "https://repo.packagist.org/p2/vendor/package.json",
+            json=response,
+            status=200,
+        )
+        with pytest.raises(IndexError):
+            get_package_info("vendor/package")
+
+    @responses.activate
+    def test_raises_on_invalid_json_response(self) -> None:
+        responses.add(
+            responses.GET,
+            "https://repo.packagist.org/p2/vendor/package.json",
+            body="not valid json",
+            status=200,
+            content_type="application/json",
+        )
+        with pytest.raises(requests.exceptions.JSONDecodeError):
+            get_package_info("vendor/package")
 
     @responses.activate
     def test_skips_prerelease_and_returns_latest_stable(self) -> None:
@@ -570,6 +609,69 @@ class TestMainExitCode:
         main()
         assert get_last_version("monolog/monolog") == "3.7.0"
         assert get_last_version("vendor/other") is None
+
+    @responses.activate
+    def test_exits_nonzero_when_source_missing_for_all_packages(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("main.SLACK_TOKEN", "xoxb-test")
+        monkeypatch.setattr("main.SLACK_CHANNEL", "C12345")
+        monkeypatch.setattr("main.load_packages", lambda: ["vendor/package"])
+
+        response = {"packages": {"vendor/package": [{"version": "1.0.0"}]}}
+        responses.add(
+            responses.GET,
+            "https://repo.packagist.org/p2/vendor/package.json",
+            json=response,
+            status=200,
+        )
+
+        with pytest.raises(SystemExit) as exc_info:
+            main()
+        assert exc_info.value.code == 1
+
+    @responses.activate
+    def test_exits_nonzero_when_packagist_returns_invalid_json(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("main.SLACK_TOKEN", "xoxb-test")
+        monkeypatch.setattr("main.SLACK_CHANNEL", "C12345")
+        monkeypatch.setattr("main.load_packages", lambda: ["vendor/package"])
+
+        responses.add(
+            responses.GET,
+            "https://repo.packagist.org/p2/vendor/package.json",
+            body="not valid json",
+            status=200,
+            content_type="application/json",
+        )
+
+        with pytest.raises(SystemExit) as exc_info:
+            main()
+        assert exc_info.value.code == 1
+
+    @responses.activate
+    def test_does_not_exit_when_no_package_has_new_version(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("main.VERSION_DIR", str(tmp_path))
+        monkeypatch.setattr("main.SLACK_TOKEN", "xoxb-test")
+        monkeypatch.setattr("main.SLACK_CHANNEL", "C12345")
+        monkeypatch.setattr("main.load_packages", lambda: ["monolog/monolog"])
+
+        save_current_version("monolog/monolog", "3.7.0")
+
+        responses.add(
+            responses.GET,
+            "https://repo.packagist.org/p2/monolog/monolog.json",
+            json=SAMPLE_PACKAGIST_RESPONSE,
+            status=200,
+        )
+
+        # Should complete without raising SystemExit: nothing changed and
+        # nothing failed, so the loop must fall through to the next
+        # iteration without incrementing either counter.
+        main()
 
     @responses.activate
     def test_exits_zero_when_all_packages_succeed(
