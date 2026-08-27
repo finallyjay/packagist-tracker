@@ -22,13 +22,25 @@ PACKAGIST_API_URL = "https://repo.packagist.org/p2/{}.json"
 
 
 def _build_session() -> requests.Session:
-    """Create a requests Session with retries for transient network failures."""
+    """Create a requests Session with retries for transient network failures.
+
+    The retry policy only covers idempotent methods (GET/HEAD). POST is
+    intentionally excluded: if Slack's ``chat.postMessage`` processes a
+    message but the response is lost (e.g. a 500 or a response timeout), an
+    automatic retry would resend the same message, and the Slack API is not
+    idempotent, so the notification would be posted twice. Since this
+    session is shared between the Packagist (GET) and Slack (POST) calls,
+    excluding POST from ``allowed_methods`` leaves Packagist's GET requests
+    retried as before while Slack's POST requests are attempted exactly
+    once and any failure is surfaced to the caller instead of being retried
+    transparently.
+    """
     session = requests.Session()
     retry = Retry(
         total=3,
         backoff_factor=0.5,
         status_forcelist=(429, 500, 502, 503, 504),
-        allowed_methods=frozenset({"GET", "POST"}),
+        allowed_methods=frozenset({"GET", "HEAD"}),
         raise_on_status=False,
     )
     adapter = HTTPAdapter(max_retries=retry)
@@ -37,7 +49,9 @@ def _build_session() -> requests.Session:
     return session
 
 
-# Shared HTTP session with retry/backoff for Packagist and Slack requests
+# Shared HTTP session with retry/backoff for Packagist (GET) requests; Slack
+# (POST) requests use the same session but are not auto-retried, since
+# chat.postMessage is not idempotent. See _build_session() for details.
 SESSION = _build_session()
 
 # Directory to store package versions
