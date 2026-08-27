@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 
 import pytest
+import requests
 import responses
 from requests.adapters import HTTPAdapter
 
@@ -406,13 +407,45 @@ class TestSessionRetries:
             assert 429 in retries.status_forcelist
             assert 503 in retries.status_forcelist
 
-    def test_session_retries_on_idempotent_and_post_methods(self) -> None:
+    def test_session_only_retries_idempotent_methods(self) -> None:
         adapter = SESSION.get_adapter("https://")
         assert isinstance(adapter, HTTPAdapter)
         retries = adapter.max_retries
         assert retries.allowed_methods is not None
         assert "GET" in retries.allowed_methods
-        assert "POST" in retries.allowed_methods
+        assert "HEAD" in retries.allowed_methods
+        assert "POST" not in retries.allowed_methods
+
+    @responses.activate
+    def test_packagist_get_is_retried_on_500(self) -> None:
+        responses.add(
+            responses.GET,
+            "https://repo.packagist.org/p2/vendor/package.json",
+            status=500,
+        )
+
+        with pytest.raises(requests.exceptions.HTTPError):
+            get_package_info("vendor/package")
+
+        # 1 initial request + 3 automatic retries.
+        assert len(responses.calls) == 4
+
+    @responses.activate
+    def test_slack_post_is_not_retried_on_500(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("main.SLACK_TOKEN", "xoxb-test-token")
+        monkeypatch.setattr("main.SLACK_CHANNEL", "C12345")
+
+        responses.add(
+            responses.POST,
+            "https://slack.com/api/chat.postMessage",
+            status=500,
+        )
+
+        with pytest.raises(requests.exceptions.HTTPError):
+            send_slack_message("monolog/monolog", "3.7.0", "https://github.com/Seldaek/monolog.git")
+
+        # No automatic retry: a duplicate POST could double-post the Slack message.
+        assert len(responses.calls) == 1
 
 
 class TestMainExitCode:
