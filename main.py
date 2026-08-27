@@ -202,14 +202,14 @@ def send_slack_message(package_name: str, current_version: str, repository_url: 
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": f":bell: *¡Nueva versión detectada para `{package_name}`!*",
+                    "text": f":bell: *New version detected for `{package_name}`!*",
                 },
             },
             {
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": f"La versión más reciente ahora es *{current_version}*",
+                    "text": f"The latest version is now *{current_version}*",
                 },
             },
             {
@@ -219,7 +219,7 @@ def send_slack_message(package_name: str, current_version: str, repository_url: 
                         "type": "button",
                         "text": {
                             "type": "plain_text",
-                            "text": "Ver repositorio",
+                            "text": "View repository",
                         },
                         "url": repository_url,
                     }
