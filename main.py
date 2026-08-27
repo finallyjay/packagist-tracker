@@ -10,13 +10,33 @@ import yaml
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+
+def resolve_log_level(value: str | None) -> int:
+    """Resolve a LOG_LEVEL environment value to a logging level number.
+
+    Falls back to logging.INFO (with the caller responsible for warning) if
+    the value is missing or does not match a known logging level name.
+    """
+    name = (value or "INFO").strip().upper()
+    return logging.getLevelNamesMapping().get(name, logging.INFO)
+
+
+_raw_log_level = os.getenv("LOG_LEVEL", "INFO")
+_resolved_log_level = resolve_log_level(_raw_log_level)
+
 # Logging configuration
 logging.basicConfig(
-    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    level=_resolved_log_level,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[logging.StreamHandler(sys.stdout)],
 )
 logger = logging.getLogger(__name__)
+
+if _resolved_log_level == logging.INFO and _raw_log_level.strip().upper() != "INFO":
+    logger.warning(
+        "Invalid LOG_LEVEL '%s'; falling back to INFO.",
+        _raw_log_level,
+    )
 
 # Packagist API base URL
 PACKAGIST_API_URL = "https://repo.packagist.org/p2/{}.json"
