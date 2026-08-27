@@ -78,6 +78,39 @@ class TestLoadPackages:
         result = load_packages(str(config))
         assert result == []
 
+    def test_returns_empty_when_packages_key_is_empty(self, tmp_path: Path) -> None:
+        config = tmp_path / "config.yml"
+        config.write_text("packages:\n")
+        result = load_packages(str(config))
+        assert result == []
+
+    def test_returns_empty_when_packages_is_a_string(self, tmp_path: Path) -> None:
+        config = tmp_path / "config.yml"
+        config.write_text("packages: monolog/monolog\n")
+        result = load_packages(str(config))
+        assert result == []
+
+    def test_filters_non_string_entries_from_packages_list(self, tmp_path: Path) -> None:
+        config = tmp_path / "config.yml"
+        config.write_text(
+            "packages:\n"
+            "  - monolog/monolog\n"
+            "  - 42\n"
+            "  - symfony/symfony\n"
+            "  - {vendor: package}\n"
+            "  - null\n"
+        )
+        result = load_packages(str(config))
+        assert result == ["monolog/monolog", "symfony/symfony"]
+
+    def test_returns_empty_when_packages_list_has_only_non_string_entries(
+        self, tmp_path: Path
+    ) -> None:
+        config = tmp_path / "config.yml"
+        config.write_text("packages:\n  - 1\n  - 2\n")
+        result = load_packages(str(config))
+        assert result == []
+
 
 class TestGetPackageInfo:
     @responses.activate
