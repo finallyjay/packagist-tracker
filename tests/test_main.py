@@ -1,5 +1,7 @@
 """Tests for the Packagist Tracker."""
 
+import logging
+import os
 from pathlib import Path
 
 import pytest
@@ -9,14 +11,24 @@ from requests.adapters import HTTPAdapter
 
 from main import (
     SESSION,
+    _touch_heartbeat,
     check_package_update,
     get_last_version,
     get_package_info,
+    is_prerelease,
     load_packages,
     main,
+    resolve_log_level,
     save_current_version,
     send_slack_message,
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_heartbeat_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Point every test at a throwaway heartbeat file instead of the real default."""
+    monkeypatch.setattr("main.HEARTBEAT_FILE", str(tmp_path / "heartbeat"))
+
 
 SAMPLE_PACKAGIST_RESPONSE = {
     "packages": {
@@ -113,6 +125,48 @@ class TestLoadPackages:
         assert result == []
 
 
+class TestIsPrerelease:
+    @pytest.mark.parametrize(
+        "version",
+        [
+            "4.0.0-alpha1",
+            "4.0.0-ALPHA1",
+            "4.0.0-alpha",
+            "4.0.0-beta1",
+            "4.0.0-BETA1",
+            "4.0.0-beta",
+            "4.0.0-rc1",
+            "4.0.0-RC1",
+            "4.0.0-rc",
+            "4.0.0-dev",
+            "4.0.0-DEV",
+            "4.0.0-a1",
+            "4.0.0-A1",
+            "4.0.0-b2",
+            "4.0.0-B2",
+            "dev-master",
+            "dev-feature/foo",
+            "DEV-main",
+        ],
+    )
+    def test_detects_prerelease_versions(self, version: str) -> None:
+        assert is_prerelease(version) is True
+
+    @pytest.mark.parametrize(
+        "version",
+        [
+            "4.0.0",
+            "v4.0.0",
+            "1.2.3",
+            "0.1.0",
+            "3.7.0",
+            "10.0.0",
+        ],
+    )
+    def test_detects_stable_versions(self, version: str) -> None:
+        assert is_prerelease(version) is False
+
+
 class TestGetPackageInfo:
     @responses.activate
     def test_returns_version_and_url(self) -> None:
@@ -138,6 +192,66 @@ class TestGetPackageInfo:
             raise AssertionError("Should have raised")
         except Exception:
             pass
+
+    @responses.activate
+    def test_skips_prerelease_and_returns_latest_stable(self) -> None:
+        response = {
+            "packages": {
+                "acme/widget": [
+                    {
+                        "version": "4.0.0-BETA1",
+                        "source": {"url": "https://github.com/acme/widget-beta.git"},
+                    },
+                    {
+                        "version": "3.9.0",
+                        "source": {"url": "https://github.com/acme/widget.git"},
+                    },
+                    {
+                        "version": "3.8.0",
+                        "source": {"url": "https://github.com/acme/widget-old.git"},
+                    },
+                ]
+            }
+        }
+        responses.add(
+            responses.GET,
+            "https://repo.packagist.org/p2/acme/widget.json",
+            json=response,
+            status=200,
+        )
+        version, url = get_package_info("acme/widget")
+        assert version == "3.9.0"
+        assert url == "https://github.com/acme/widget.git"
+
+    @responses.activate
+    def test_falls_back_to_newest_when_all_versions_are_prereleases(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        response = {
+            "packages": {
+                "acme/widget": [
+                    {
+                        "version": "4.0.0-BETA1",
+                        "source": {"url": "https://github.com/acme/widget-beta.git"},
+                    },
+                    {
+                        "version": "4.0.0-alpha1",
+                        "source": {"url": "https://github.com/acme/widget-alpha.git"},
+                    },
+                ]
+            }
+        }
+        responses.add(
+            responses.GET,
+            "https://repo.packagist.org/p2/acme/widget.json",
+            json=response,
+            status=200,
+        )
+        with caplog.at_level("DEBUG", logger="main"):
+            version, url = get_package_info("acme/widget")
+        assert version == "4.0.0-BETA1"
+        assert url == "https://github.com/acme/widget-beta.git"
+        assert "pre-releases" in caplog.text
 
 
 class TestVersionStorage:
@@ -481,3 +595,124 @@ class TestMainExitCode:
 
         # Should complete without raising SystemExit.
         main()
+
+
+class TestHeartbeat:
+    def test_touch_heartbeat_creates_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        heartbeat = tmp_path / "heartbeat"
+        monkeypatch.setattr("main.HEARTBEAT_FILE", str(heartbeat))
+        _touch_heartbeat()
+        assert heartbeat.exists()
+
+    def test_touch_heartbeat_updates_mtime_of_existing_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        heartbeat = tmp_path / "heartbeat"
+        heartbeat.write_text("stale")
+        old_mtime = heartbeat.stat().st_mtime - 100
+        os.utime(heartbeat, (old_mtime, old_mtime))
+        monkeypatch.setattr("main.HEARTBEAT_FILE", str(heartbeat))
+
+        _touch_heartbeat()
+
+        assert heartbeat.stat().st_mtime > old_mtime
+
+    def test_touch_heartbeat_does_not_raise_when_path_is_unwritable(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("main.HEARTBEAT_FILE", "/nonexistent-dir/heartbeat")
+        _touch_heartbeat()  # Must not raise.
+
+    @responses.activate
+    def test_heartbeat_written_when_no_packages_configured(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        heartbeat = tmp_path / "heartbeat"
+        monkeypatch.setattr("main.HEARTBEAT_FILE", str(heartbeat))
+        monkeypatch.setattr("main.SLACK_TOKEN", "xoxb-test")
+        monkeypatch.setattr("main.SLACK_CHANNEL", "C12345")
+        monkeypatch.setattr("main.load_packages", lambda: [])
+
+        main()
+
+        assert heartbeat.exists()
+
+    @responses.activate
+    def test_heartbeat_written_after_a_successful_cycle(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        heartbeat = tmp_path / "heartbeat"
+        monkeypatch.setattr("main.HEARTBEAT_FILE", str(heartbeat))
+        monkeypatch.setattr("main.VERSION_DIR", str(tmp_path))
+        monkeypatch.setattr("main.SLACK_TOKEN", "xoxb-test")
+        monkeypatch.setattr("main.SLACK_CHANNEL", "C12345")
+        monkeypatch.setattr("main.load_packages", lambda: ["monolog/monolog"])
+
+        responses.add(
+            responses.GET,
+            "https://repo.packagist.org/p2/monolog/monolog.json",
+            json=SAMPLE_PACKAGIST_RESPONSE,
+            status=200,
+        )
+        responses.add(
+            responses.POST,
+            "https://slack.com/api/chat.postMessage",
+            json={"ok": True},
+            status=200,
+        )
+
+        main()
+
+        assert heartbeat.exists()
+
+    @responses.activate
+    def test_heartbeat_written_even_when_every_package_fails(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        heartbeat = tmp_path / "heartbeat"
+        monkeypatch.setattr("main.HEARTBEAT_FILE", str(heartbeat))
+        monkeypatch.setattr("main.SLACK_TOKEN", "xoxb-test")
+        monkeypatch.setattr("main.SLACK_CHANNEL", "C12345")
+        monkeypatch.setattr("main.load_packages", lambda: ["vendor/broken"])
+
+        responses.add(
+            responses.GET,
+            "https://repo.packagist.org/p2/vendor/broken.json",
+            status=500,
+        )
+
+        # The check cycle still completes (and the heartbeat still reflects
+        # that), even though it exits nonzero to signal the failure.
+        with pytest.raises(SystemExit):
+            main()
+
+        assert heartbeat.exists()
+
+    def test_heartbeat_not_written_when_slack_config_missing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        heartbeat = tmp_path / "heartbeat"
+        monkeypatch.setattr("main.HEARTBEAT_FILE", str(heartbeat))
+        monkeypatch.setattr("main.SLACK_TOKEN", None)
+        monkeypatch.setattr("main.SLACK_CHANNEL", "C12345")
+
+        with pytest.raises(SystemExit):
+            main()
+
+        assert not heartbeat.exists()
+
+
+class TestResolveLogLevel:
+    def test_valid_level(self) -> None:
+        assert resolve_log_level("DEBUG") == logging.DEBUG
+
+    def test_valid_level_case_insensitive(self) -> None:
+        assert resolve_log_level("warning") == logging.WARNING
+
+    def test_invalid_level_falls_back_to_info(self) -> None:
+        assert resolve_log_level("verbose") == logging.INFO
+
+    def test_default_when_none(self) -> None:
+        assert resolve_log_level(None) == logging.INFO

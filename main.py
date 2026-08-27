@@ -2,6 +2,7 @@
 
 import logging
 import os
+import re
 import sys
 
 import requests
@@ -9,16 +10,56 @@ import yaml
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+
+def resolve_log_level(value: str | None) -> int:
+    """Resolve a LOG_LEVEL environment value to a logging level number.
+
+    Falls back to logging.INFO (with the caller responsible for warning) if
+    the value is missing or does not match a known logging level name.
+    """
+    name = (value or "INFO").strip().upper()
+    return logging.getLevelNamesMapping().get(name, logging.INFO)
+
+
+_raw_log_level = os.getenv("LOG_LEVEL", "INFO")
+_resolved_log_level = resolve_log_level(_raw_log_level)
+
 # Logging configuration
 logging.basicConfig(
-    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    level=_resolved_log_level,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[logging.StreamHandler(sys.stdout)],
 )
 logger = logging.getLogger(__name__)
 
+if _resolved_log_level == logging.INFO and _raw_log_level.strip().upper() != "INFO":
+    logger.warning(
+        "Invalid LOG_LEVEL '%s'; falling back to INFO.",
+        _raw_log_level,
+    )
+
 # Packagist API base URL
 PACKAGIST_API_URL = "https://repo.packagist.org/p2/{}.json"
+
+# Matches standard Composer pre-release suffixes: -alpha, -beta, -rc, -dev
+# (optionally followed by a number) and their shorthand forms -a1, -b2.
+_PRERELEASE_SUFFIX_RE = re.compile(
+    r"-(?:alpha|beta|rc|dev)(?:[.\-]?\d+)?$|-(?:a|b)\d+$",
+    re.IGNORECASE,
+)
+
+
+def is_prerelease(version: str) -> bool:
+    """Return True if a Composer version string denotes a pre-release.
+
+    Recognizes the standard Composer pre-release suffixes (``-alpha``,
+    ``-beta``, ``-rc``, ``-dev``, and their shorthand forms such as
+    ``-a1``/``-b2``/``-RC1``, all case-insensitive) as well as the
+    ``dev-`` branch-alias prefix (e.g. ``dev-master``).
+    """
+    if version.lower().startswith("dev-"):
+        return True
+    return bool(_PRERELEASE_SUFFIX_RE.search(version))
 
 
 def _build_session() -> requests.Session:
@@ -56,6 +97,12 @@ SESSION = _build_session()
 
 # Directory to store package versions
 VERSION_DIR = os.getenv("VERSION_DIR", "versions")
+
+# File touched at the end of every completed check cycle. The Docker Compose
+# healthcheck uses this file's mtime to detect a wedged process, since the
+# entrypoint's outer shell loop keeps the container itself running even if
+# main.py were to hang (see docker-compose.yml).
+HEARTBEAT_FILE = os.getenv("HEARTBEAT_FILE", "/tmp/last_run")
 
 # Slack credentials
 SLACK_TOKEN = os.getenv("SLACK_TOKEN")
@@ -108,13 +155,29 @@ def load_packages(config_path: str = "config.yml") -> list[str]:
 
 
 def get_package_info(package_name: str) -> tuple[str, str]:
-    """Fetch the latest version and repository URL from Packagist."""
+    """Fetch the latest stable version and repository URL from Packagist.
+
+    The p2 endpoint returns versions in descending order and includes
+    pre-releases (alpha/beta/RC/dev tags). Pre-releases are skipped so that
+    a package with a newer pre-release tag doesn't shadow the latest stable
+    release. If every available version is a pre-release, the first
+    (newest) one is used instead.
+    """
     url = PACKAGIST_API_URL.format(package_name)
     response = SESSION.get(url, timeout=30)
     response.raise_for_status()
 
     data = response.json()
-    package_info = data["packages"][package_name][0]
+    versions = data["packages"][package_name]
+
+    package_info = next((v for v in versions if not is_prerelease(v["version"])), None)
+    if package_info is None:
+        logger.debug(
+            "[%s] All available versions are pre-releases; using the latest one.",
+            package_name,
+        )
+        package_info = versions[0]
+
     current_version: str = package_info["version"]
     repository_url: str = package_info["source"]["url"]
     return current_version, repository_url
@@ -191,6 +254,18 @@ def send_slack_message(package_name: str, current_version: str, repository_url: 
     return True
 
 
+def _touch_heartbeat() -> None:
+    """Update HEARTBEAT_FILE's mtime to mark a completed check cycle.
+
+    Best-effort only: a failure here must never crash the check loop itself.
+    """
+    try:
+        with open(HEARTBEAT_FILE, "a"):
+            os.utime(HEARTBEAT_FILE, None)
+    except OSError as e:
+        logger.warning("Could not update heartbeat file '%s': %s", HEARTBEAT_FILE, e)
+
+
 def check_package_update(package_name: str) -> bool | None:
     """Check a single package for updates.
 
@@ -227,6 +302,7 @@ def main() -> None:
     packages = load_packages()
     if not packages:
         logger.info("No packages to track. Exiting.")
+        _touch_heartbeat()
         return
 
     logger.info("Checking %d package(s) for updates...", len(packages))
@@ -248,6 +324,7 @@ def main() -> None:
             logger.error("[%s] Error parsing Packagist response: %s", package, e)
 
     logger.info("Done. %d package(s) updated.", updated)
+    _touch_heartbeat()
 
     # Signal failure to monitoring when every package check failed.
     if failed and failed == len(packages):
