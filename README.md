@@ -161,7 +161,7 @@ ruff format .
 ### Type checking
 
 ```shell
-mypy main.py
+mypy main.py tests
 ```
 
 ### Pre-commit hooks

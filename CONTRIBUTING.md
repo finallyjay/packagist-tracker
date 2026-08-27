@@ -31,7 +31,7 @@ pytest
 ```shell
 ruff check .
 ruff format .
-mypy main.py
+mypy main.py tests
 ```
 
 ### Before submitting

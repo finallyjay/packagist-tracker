@@ -1,5 +1,6 @@
 """Tests for the Packagist Tracker."""
 
+import logging
 import os
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from main import (
     get_package_info,
     load_packages,
     main,
+    resolve_log_level,
     save_current_version,
     send_slack_message,
 )
@@ -564,3 +566,17 @@ class TestHeartbeat:
             main()
 
         assert not heartbeat.exists()
+
+
+class TestResolveLogLevel:
+    def test_valid_level(self) -> None:
+        assert resolve_log_level("DEBUG") == logging.DEBUG
+
+    def test_valid_level_case_insensitive(self) -> None:
+        assert resolve_log_level("warning") == logging.WARNING
+
+    def test_invalid_level_falls_back_to_info(self) -> None:
+        assert resolve_log_level("verbose") == logging.INFO
+
+    def test_default_when_none(self) -> None:
+        assert resolve_log_level(None) == logging.INFO
