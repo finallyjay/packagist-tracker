@@ -257,7 +257,7 @@ class TestCheckPackageUpdate:
         )
 
         result = check_package_update("monolog/monolog")
-        assert result is False
+        assert result is None
         assert get_last_version("monolog/monolog") is None
 
     @responses.activate
@@ -343,6 +343,107 @@ class TestMainExitCode:
             responses.GET,
             "https://repo.packagist.org/p2/vendor/broken.json",
             status=500,
+        )
+
+        # Should complete without raising SystemExit.
+        main()
+
+    @responses.activate
+    def test_exits_nonzero_when_slack_notification_fails_for_all_packages(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("main.VERSION_DIR", str(tmp_path))
+        monkeypatch.setattr("main.SLACK_TOKEN", "xoxb-test")
+        monkeypatch.setattr("main.SLACK_CHANNEL", "C12345")
+        monkeypatch.setattr("main.load_packages", lambda: ["monolog/monolog"])
+
+        responses.add(
+            responses.GET,
+            "https://repo.packagist.org/p2/monolog/monolog.json",
+            json=SAMPLE_PACKAGIST_RESPONSE,
+            status=200,
+        )
+        responses.add(
+            responses.POST,
+            "https://slack.com/api/chat.postMessage",
+            json={"ok": False, "error": "invalid_auth"},
+            status=200,
+        )
+
+        with pytest.raises(SystemExit) as exc_info:
+            main()
+        assert exc_info.value.code == 1
+
+    @responses.activate
+    def test_does_not_exit_when_slack_failure_mixed_with_success(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("main.VERSION_DIR", str(tmp_path))
+        monkeypatch.setattr("main.SLACK_TOKEN", "xoxb-test")
+        monkeypatch.setattr("main.SLACK_CHANNEL", "C12345")
+        monkeypatch.setattr("main.load_packages", lambda: ["monolog/monolog", "vendor/other"])
+
+        other_response = {
+            "packages": {
+                "vendor/other": [
+                    {
+                        "version": "1.0.0",
+                        "source": {"url": "https://github.com/vendor/other.git"},
+                    }
+                ]
+            }
+        }
+
+        responses.add(
+            responses.GET,
+            "https://repo.packagist.org/p2/monolog/monolog.json",
+            json=SAMPLE_PACKAGIST_RESPONSE,
+            status=200,
+        )
+        responses.add(
+            responses.POST,
+            "https://slack.com/api/chat.postMessage",
+            json={"ok": True},
+            status=200,
+        )
+        responses.add(
+            responses.GET,
+            "https://repo.packagist.org/p2/vendor/other.json",
+            json=other_response,
+            status=200,
+        )
+        responses.add(
+            responses.POST,
+            "https://slack.com/api/chat.postMessage",
+            json={"ok": False, "error": "invalid_auth"},
+            status=200,
+        )
+
+        # Should complete without raising SystemExit: not every package failed.
+        main()
+        assert get_last_version("monolog/monolog") == "3.7.0"
+        assert get_last_version("vendor/other") is None
+
+    @responses.activate
+    def test_exits_zero_when_all_packages_succeed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("main.VERSION_DIR", str(tmp_path))
+        monkeypatch.setattr("main.SLACK_TOKEN", "xoxb-test")
+        monkeypatch.setattr("main.SLACK_CHANNEL", "C12345")
+        monkeypatch.setattr("main.load_packages", lambda: ["monolog/monolog"])
+
+        responses.add(
+            responses.GET,
+            "https://repo.packagist.org/p2/monolog/monolog.json",
+            json=SAMPLE_PACKAGIST_RESPONSE,
+            status=200,
+        )
+        responses.add(
+            responses.POST,
+            "https://slack.com/api/chat.postMessage",
+            json={"ok": True},
+            status=200,
         )
 
         # Should complete without raising SystemExit.

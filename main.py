@@ -177,8 +177,13 @@ def send_slack_message(package_name: str, current_version: str, repository_url: 
     return True
 
 
-def check_package_update(package_name: str) -> bool:
-    """Check a single package for updates. Returns True if a new version was notified."""
+def check_package_update(package_name: str) -> bool | None:
+    """Check a single package for updates.
+
+    Returns True if a new version was found and notified, False if no new
+    version was found, or None if a new version was found but the Slack
+    notification failed.
+    """
     current_version, repository_url = get_package_info(package_name)
     last_version = get_last_version(package_name)
 
@@ -189,13 +194,14 @@ def check_package_update(package_name: str) -> bool:
         last_version or "never",
     )
 
-    if current_version != last_version and send_slack_message(
-        package_name, current_version, repository_url
-    ):
-        save_current_version(package_name, current_version)
-        return True
+    if current_version == last_version:
+        return False
 
-    return False
+    if not send_slack_message(package_name, current_version, repository_url):
+        return None
+
+    save_current_version(package_name, current_version)
+    return True
 
 
 def main() -> None:
@@ -214,8 +220,12 @@ def main() -> None:
     failed = 0
     for package in packages:
         try:
-            if check_package_update(package):
+            result = check_package_update(package)
+            if result:
                 updated += 1
+            elif result is None:
+                failed += 1
+                logger.error("[%s] Slack notification failed.", package)
         except requests.exceptions.RequestException as e:
             failed += 1
             logger.error("[%s] HTTP error: %s", package, e)
