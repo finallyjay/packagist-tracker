@@ -14,6 +14,7 @@ from main import (
     check_package_update,
     get_last_version,
     get_package_info,
+    is_prerelease,
     load_packages,
     main,
     resolve_log_level,
@@ -123,6 +124,48 @@ class TestLoadPackages:
         assert result == []
 
 
+class TestIsPrerelease:
+    @pytest.mark.parametrize(
+        "version",
+        [
+            "4.0.0-alpha1",
+            "4.0.0-ALPHA1",
+            "4.0.0-alpha",
+            "4.0.0-beta1",
+            "4.0.0-BETA1",
+            "4.0.0-beta",
+            "4.0.0-rc1",
+            "4.0.0-RC1",
+            "4.0.0-rc",
+            "4.0.0-dev",
+            "4.0.0-DEV",
+            "4.0.0-a1",
+            "4.0.0-A1",
+            "4.0.0-b2",
+            "4.0.0-B2",
+            "dev-master",
+            "dev-feature/foo",
+            "DEV-main",
+        ],
+    )
+    def test_detects_prerelease_versions(self, version: str) -> None:
+        assert is_prerelease(version) is True
+
+    @pytest.mark.parametrize(
+        "version",
+        [
+            "4.0.0",
+            "v4.0.0",
+            "1.2.3",
+            "0.1.0",
+            "3.7.0",
+            "10.0.0",
+        ],
+    )
+    def test_detects_stable_versions(self, version: str) -> None:
+        assert is_prerelease(version) is False
+
+
 class TestGetPackageInfo:
     @responses.activate
     def test_returns_version_and_url(self) -> None:
@@ -148,6 +191,66 @@ class TestGetPackageInfo:
             raise AssertionError("Should have raised")
         except Exception:
             pass
+
+    @responses.activate
+    def test_skips_prerelease_and_returns_latest_stable(self) -> None:
+        response = {
+            "packages": {
+                "acme/widget": [
+                    {
+                        "version": "4.0.0-BETA1",
+                        "source": {"url": "https://github.com/acme/widget-beta.git"},
+                    },
+                    {
+                        "version": "3.9.0",
+                        "source": {"url": "https://github.com/acme/widget.git"},
+                    },
+                    {
+                        "version": "3.8.0",
+                        "source": {"url": "https://github.com/acme/widget-old.git"},
+                    },
+                ]
+            }
+        }
+        responses.add(
+            responses.GET,
+            "https://repo.packagist.org/p2/acme/widget.json",
+            json=response,
+            status=200,
+        )
+        version, url = get_package_info("acme/widget")
+        assert version == "3.9.0"
+        assert url == "https://github.com/acme/widget.git"
+
+    @responses.activate
+    def test_falls_back_to_newest_when_all_versions_are_prereleases(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        response = {
+            "packages": {
+                "acme/widget": [
+                    {
+                        "version": "4.0.0-BETA1",
+                        "source": {"url": "https://github.com/acme/widget-beta.git"},
+                    },
+                    {
+                        "version": "4.0.0-alpha1",
+                        "source": {"url": "https://github.com/acme/widget-alpha.git"},
+                    },
+                ]
+            }
+        }
+        responses.add(
+            responses.GET,
+            "https://repo.packagist.org/p2/acme/widget.json",
+            json=response,
+            status=200,
+        )
+        with caplog.at_level("DEBUG", logger="main"):
+            version, url = get_package_info("acme/widget")
+        assert version == "4.0.0-BETA1"
+        assert url == "https://github.com/acme/widget-beta.git"
+        assert "pre-releases" in caplog.text
 
 
 class TestVersionStorage:

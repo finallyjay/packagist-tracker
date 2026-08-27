@@ -2,6 +2,7 @@
 
 import logging
 import os
+import re
 import sys
 
 import requests
@@ -39,6 +40,26 @@ if _resolved_log_level == logging.INFO and _raw_log_level.strip().upper() != "IN
 
 # Packagist API base URL
 PACKAGIST_API_URL = "https://repo.packagist.org/p2/{}.json"
+
+# Matches standard Composer pre-release suffixes: -alpha, -beta, -rc, -dev
+# (optionally followed by a number) and their shorthand forms -a1, -b2.
+_PRERELEASE_SUFFIX_RE = re.compile(
+    r"-(?:alpha|beta|rc|dev)(?:[.\-]?\d+)?$|-(?:a|b)\d+$",
+    re.IGNORECASE,
+)
+
+
+def is_prerelease(version: str) -> bool:
+    """Return True if a Composer version string denotes a pre-release.
+
+    Recognizes the standard Composer pre-release suffixes (``-alpha``,
+    ``-beta``, ``-rc``, ``-dev``, and their shorthand forms such as
+    ``-a1``/``-b2``/``-RC1``, all case-insensitive) as well as the
+    ``dev-`` branch-alias prefix (e.g. ``dev-master``).
+    """
+    if version.lower().startswith("dev-"):
+        return True
+    return bool(_PRERELEASE_SUFFIX_RE.search(version))
 
 
 def _build_session() -> requests.Session:
@@ -120,13 +141,29 @@ def load_packages(config_path: str = "config.yml") -> list[str]:
 
 
 def get_package_info(package_name: str) -> tuple[str, str]:
-    """Fetch the latest version and repository URL from Packagist."""
+    """Fetch the latest stable version and repository URL from Packagist.
+
+    The p2 endpoint returns versions in descending order and includes
+    pre-releases (alpha/beta/RC/dev tags). Pre-releases are skipped so that
+    a package with a newer pre-release tag doesn't shadow the latest stable
+    release. If every available version is a pre-release, the first
+    (newest) one is used instead.
+    """
     url = PACKAGIST_API_URL.format(package_name)
     response = SESSION.get(url, timeout=30)
     response.raise_for_status()
 
     data = response.json()
-    package_info = data["packages"][package_name][0]
+    versions = data["packages"][package_name]
+
+    package_info = next((v for v in versions if not is_prerelease(v["version"])), None)
+    if package_info is None:
+        logger.debug(
+            "[%s] All available versions are pre-releases; using the latest one.",
+            package_name,
+        )
+        package_info = versions[0]
+
     current_version: str = package_info["version"]
     repository_url: str = package_info["source"]["url"]
     return current_version, repository_url
