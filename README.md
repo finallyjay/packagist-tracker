@@ -116,13 +116,26 @@ the container to pick up changes. Version state is persisted through the
 |------------------|---------------------------------------------------------------|---------|---------|
 | `SLACK_TOKEN`    | Slack Bot OAuth token                                        | —       | `main.py` |
 | `SLACK_CHANNEL`  | Slack channel ID for notifications                           | —       | `main.py` |
-| `CHECK_INTERVAL` | Seconds between checks, used by the Compose entrypoint's loop | `900`   | `docker-compose.yml` entrypoint only |
+| `CHECK_INTERVAL` | Seconds between checks, used by the Compose entrypoint's loop | `900`   | `docker-compose.yml` entrypoint and healthcheck |
 | `LOG_LEVEL`      | Logging level (DEBUG/INFO/WARNING)                           | `INFO`  | `main.py` |
+| `HEARTBEAT_FILE` | Path touched after each completed check cycle, used for the container healthcheck | `/tmp/last_run` | `main.py` and `docker-compose.yml` healthcheck |
 
 `CHECK_INTERVAL` is a Docker Compose setting, not an application setting:
 `main.py` never reads it. It only controls the sleep duration in the
 container's shell loop (see [How it works](#how-it-works) above). Running
 `main.py` directly ignores it entirely.
+
+> **Container health and shutdown:** the `version-checker` service sets
+> `init: true` so Docker runs [tini](https://github.com/krallin/tini) as
+> PID 1. Without it, the `sh -c "while true; ..."` entrypoint doesn't forward
+> `SIGTERM`, so every `docker compose stop` would wait out the full stop
+> timeout and get `SIGKILL`ed instead of exiting promptly. The service also
+> defines a `healthcheck` that checks whether `HEARTBEAT_FILE` exists and was
+> modified within roughly the last two `CHECK_INTERVAL`s; `main.py` touches
+> that file at the end of every completed check cycle (regardless of
+> per-package success or failure), so the healthcheck can catch a wedged
+> process even though the outer shell loop keeps the container itself
+> running.
 
 ## Development
 

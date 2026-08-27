@@ -1,6 +1,11 @@
 services:
   version-checker:
     build: .
+    # Run tini as PID 1 so signals (e.g. SIGTERM from `docker compose stop`)
+    # are forwarded to the "sh -c" entrypoint below instead of being ignored,
+    # which would otherwise force every stop to wait out the full stop
+    # timeout and get SIGKILLed.
+    init: true
     volumes:
       # Config is mounted read-only instead of baked into the image.
       - ./config.yml:/app/config.yml:ro
@@ -13,5 +18,22 @@ services:
     environment:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - CHECK_INTERVAL=${CHECK_INTERVAL:-900}
+      - HEARTBEAT_FILE=${HEARTBEAT_FILE:-/tmp/last_run}
     entrypoint: ["sh", "-c", "while true; do python main.py; sleep ${CHECK_INTERVAL:-900}; done"]
+    # main.py touches HEARTBEAT_FILE at the end of every completed check
+    # cycle (success or per-package failure alike). The outer shell loop
+    # above keeps the container running even if main.py were to hang, so a
+    # stale heartbeat is what actually reveals a wedged process. Unhealthy if
+    # the file is missing or hasn't been touched in the last ~2 check
+    # intervals (one missed cycle of slack, rounded up to whole minutes
+    # since `find -mmin` has minute granularity).
+    healthcheck:
+      test: [
+          "CMD-SHELL",
+          "find \"${HEARTBEAT_FILE:-/tmp/last_run}\" -mmin -$(( (${CHECK_INTERVAL:-900} * 2 + 59) / 60 )) 2>/dev/null | grep -q .",
+        ]
+      interval: 60s
+      timeout: 10s
+      start_period: 120s
+      retries: 3
     restart: unless-stopped
