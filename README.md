@@ -24,7 +24,26 @@ Monitor PHP package versions on [Packagist](https://packagist.org) and receive S
 2. Queries the Packagist API for the latest version of each package
 3. Compares with the last known version (stored locally in `versions/`)
 4. If a new version is detected, sends a Slack notification
-5. Repeats on a configurable interval (default: 15 minutes)
+
+`python main.py` performs a single pass over all packages and then exits —
+`main.py` itself has no loop or scheduler. Recurring checks are handled
+outside the application:
+
+- **Docker Compose:** the `version-checker` service's entrypoint wraps
+  `python main.py` in a shell loop that sleeps for `CHECK_INTERVAL` seconds
+  between passes (default: 900 seconds / 15 minutes). `CHECK_INTERVAL` is read
+  by that shell loop, not by `main.py`.
+- **Native (no Docker):** run `python main.py` once per interval using your
+  own scheduler, e.g. cron:
+
+  ```cron
+  */15 * * * * cd /path/to/packagist-tracker && python main.py
+  ```
+
+> **Note on first run:** with an empty (or missing) `versions/` directory,
+> every package has no stored last version, so the first pass sends a Slack
+> notification for every package in `config.yml`. This is expected — after
+> that first pass, only new versions trigger notifications.
 
 ## Setup
 
@@ -77,17 +96,33 @@ the container to pick up changes. Version state is persisted through the
 
 > **Note on permissions:** the container runs as a non-root `app` user. If the
 > host `./versions` directory is owned by another user, the container may not be
-> able to write to it. Make sure the directory is writable by the container
-> user (for example `chmod 777 ./versions`, or `chown` it to a matching UID).
+> able to write to it. Prefer one of these safer options over opening up
+> permissions:
+>
+> - Set `user: "${UID}:${GID}"` on the `version-checker` service in
+>   `docker-compose.yml` so the container runs as your host user, and
+>   `export UID GID` (or set them in `.env`) before running `docker compose up`.
+> - Use a Docker named volume instead of a host bind mount for `./versions`,
+>   letting Docker manage ownership.
+>
+> As a last resort, and only if the options above aren't feasible,
+> `chown` the directory to a matching UID or `chmod 777 ./versions` — the
+> latter grants write access to any local user and process, so avoid it where
+> possible.
 
 ### Configuration options
 
-| Variable         | Description                          | Default |
-|------------------|--------------------------------------|---------|
-| `SLACK_TOKEN`    | Slack Bot OAuth token                | —       |
-| `SLACK_CHANNEL`  | Slack channel ID for notifications   | —       |
-| `CHECK_INTERVAL` | Seconds between checks               | `900`   |
-| `LOG_LEVEL`      | Logging level (DEBUG/INFO/WARNING)   | `INFO`  |
+| Variable         | Description                                                 | Default | Read by |
+|------------------|---------------------------------------------------------------|---------|---------|
+| `SLACK_TOKEN`    | Slack Bot OAuth token                                        | —       | `main.py` |
+| `SLACK_CHANNEL`  | Slack channel ID for notifications                           | —       | `main.py` |
+| `CHECK_INTERVAL` | Seconds between checks, used by the Compose entrypoint's loop | `900`   | `docker-compose.yml` entrypoint only |
+| `LOG_LEVEL`      | Logging level (DEBUG/INFO/WARNING)                           | `INFO`  | `main.py` |
+
+`CHECK_INTERVAL` is a Docker Compose setting, not an application setting:
+`main.py` never reads it. It only controls the sleep duration in the
+container's shell loop (see [How it works](#how-it-works) above). Running
+`main.py` directly ignores it entirely.
 
 ## Development
 
