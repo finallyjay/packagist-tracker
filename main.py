@@ -43,6 +43,12 @@ SESSION = _build_session()
 # Directory to store package versions
 VERSION_DIR = os.getenv("VERSION_DIR", "versions")
 
+# File touched at the end of every completed check cycle. The Docker Compose
+# healthcheck uses this file's mtime to detect a wedged process, since the
+# entrypoint's outer shell loop keeps the container itself running even if
+# main.py were to hang (see docker-compose.yml).
+HEARTBEAT_FILE = os.getenv("HEARTBEAT_FILE", "/tmp/last_run")
+
 # Slack credentials
 SLACK_TOKEN = os.getenv("SLACK_TOKEN")
 SLACK_CHANNEL = os.getenv("SLACK_CHANNEL")
@@ -177,6 +183,18 @@ def send_slack_message(package_name: str, current_version: str, repository_url: 
     return True
 
 
+def _touch_heartbeat() -> None:
+    """Update HEARTBEAT_FILE's mtime to mark a completed check cycle.
+
+    Best-effort only: a failure here must never crash the check loop itself.
+    """
+    try:
+        with open(HEARTBEAT_FILE, "a"):
+            os.utime(HEARTBEAT_FILE, None)
+    except OSError as e:
+        logger.warning("Could not update heartbeat file '%s': %s", HEARTBEAT_FILE, e)
+
+
 def check_package_update(package_name: str) -> bool | None:
     """Check a single package for updates.
 
@@ -213,6 +231,7 @@ def main() -> None:
     packages = load_packages()
     if not packages:
         logger.info("No packages to track. Exiting.")
+        _touch_heartbeat()
         return
 
     logger.info("Checking %d package(s) for updates...", len(packages))
@@ -234,6 +253,7 @@ def main() -> None:
             logger.error("[%s] Error parsing Packagist response: %s", package, e)
 
     logger.info("Done. %d package(s) updated.", updated)
+    _touch_heartbeat()
 
     # Signal failure to monitoring when every package check failed.
     if failed and failed == len(packages):

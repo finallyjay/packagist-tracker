@@ -1,5 +1,6 @@
 """Tests for the Packagist Tracker."""
 
+import os
 from pathlib import Path
 
 import pytest
@@ -8,6 +9,7 @@ from requests.adapters import HTTPAdapter
 
 from main import (
     SESSION,
+    _touch_heartbeat,
     check_package_update,
     get_last_version,
     get_package_info,
@@ -16,6 +18,13 @@ from main import (
     save_current_version,
     send_slack_message,
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_heartbeat_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Point every test at a throwaway heartbeat file instead of the real default."""
+    monkeypatch.setattr("main.HEARTBEAT_FILE", str(tmp_path / "heartbeat"))
+
 
 SAMPLE_PACKAGIST_RESPONSE = {
     "packages": {
@@ -448,3 +457,110 @@ class TestMainExitCode:
 
         # Should complete without raising SystemExit.
         main()
+
+
+class TestHeartbeat:
+    def test_touch_heartbeat_creates_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        heartbeat = tmp_path / "heartbeat"
+        monkeypatch.setattr("main.HEARTBEAT_FILE", str(heartbeat))
+        _touch_heartbeat()
+        assert heartbeat.exists()
+
+    def test_touch_heartbeat_updates_mtime_of_existing_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        heartbeat = tmp_path / "heartbeat"
+        heartbeat.write_text("stale")
+        old_mtime = heartbeat.stat().st_mtime - 100
+        os.utime(heartbeat, (old_mtime, old_mtime))
+        monkeypatch.setattr("main.HEARTBEAT_FILE", str(heartbeat))
+
+        _touch_heartbeat()
+
+        assert heartbeat.stat().st_mtime > old_mtime
+
+    def test_touch_heartbeat_does_not_raise_when_path_is_unwritable(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("main.HEARTBEAT_FILE", "/nonexistent-dir/heartbeat")
+        _touch_heartbeat()  # Must not raise.
+
+    @responses.activate
+    def test_heartbeat_written_when_no_packages_configured(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        heartbeat = tmp_path / "heartbeat"
+        monkeypatch.setattr("main.HEARTBEAT_FILE", str(heartbeat))
+        monkeypatch.setattr("main.SLACK_TOKEN", "xoxb-test")
+        monkeypatch.setattr("main.SLACK_CHANNEL", "C12345")
+        monkeypatch.setattr("main.load_packages", lambda: [])
+
+        main()
+
+        assert heartbeat.exists()
+
+    @responses.activate
+    def test_heartbeat_written_after_a_successful_cycle(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        heartbeat = tmp_path / "heartbeat"
+        monkeypatch.setattr("main.HEARTBEAT_FILE", str(heartbeat))
+        monkeypatch.setattr("main.VERSION_DIR", str(tmp_path))
+        monkeypatch.setattr("main.SLACK_TOKEN", "xoxb-test")
+        monkeypatch.setattr("main.SLACK_CHANNEL", "C12345")
+        monkeypatch.setattr("main.load_packages", lambda: ["monolog/monolog"])
+
+        responses.add(
+            responses.GET,
+            "https://repo.packagist.org/p2/monolog/monolog.json",
+            json=SAMPLE_PACKAGIST_RESPONSE,
+            status=200,
+        )
+        responses.add(
+            responses.POST,
+            "https://slack.com/api/chat.postMessage",
+            json={"ok": True},
+            status=200,
+        )
+
+        main()
+
+        assert heartbeat.exists()
+
+    @responses.activate
+    def test_heartbeat_written_even_when_every_package_fails(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        heartbeat = tmp_path / "heartbeat"
+        monkeypatch.setattr("main.HEARTBEAT_FILE", str(heartbeat))
+        monkeypatch.setattr("main.SLACK_TOKEN", "xoxb-test")
+        monkeypatch.setattr("main.SLACK_CHANNEL", "C12345")
+        monkeypatch.setattr("main.load_packages", lambda: ["vendor/broken"])
+
+        responses.add(
+            responses.GET,
+            "https://repo.packagist.org/p2/vendor/broken.json",
+            status=500,
+        )
+
+        # The check cycle still completes (and the heartbeat still reflects
+        # that), even though it exits nonzero to signal the failure.
+        with pytest.raises(SystemExit):
+            main()
+
+        assert heartbeat.exists()
+
+    def test_heartbeat_not_written_when_slack_config_missing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        heartbeat = tmp_path / "heartbeat"
+        monkeypatch.setattr("main.HEARTBEAT_FILE", str(heartbeat))
+        monkeypatch.setattr("main.SLACK_TOKEN", None)
+        monkeypatch.setattr("main.SLACK_CHANNEL", "C12345")
+
+        with pytest.raises(SystemExit):
+            main()
+
+        assert not heartbeat.exists()
