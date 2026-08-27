@@ -19,6 +19,10 @@ jobs:
         uses: actions/setup-python@v7
         with:
           python-version: "3.14"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
 
       - name: Install dependencies
         run: pip install -r requirements-dev.txt
@@ -41,6 +45,10 @@ jobs:
         uses: actions/setup-python@v7
         with:
           python-version: "3.14"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
 
       - name: Install dependencies
         run: pip install -r requirements-dev.txt
@@ -55,3 +63,20 @@ jobs:
 
       - name: Build Docker image
         run: docker build -t packagist-tracker .
+
+      - name: Smoke test container
+        run: |
+          set -e
+
+          echo "== Verifying the container fails fast (no crash traceback) when Slack config is missing =="
+          set +e
+          docker run --rm packagist-tracker
+          exit_code=$?
+          set -e
+          if [ "$exit_code" -ne 1 ]; then
+            echo "Expected exit code 1 for missing SLACK_TOKEN/SLACK_CHANNEL, got $exit_code"
+            exit 1
+          fi
+
+          echo "== Verifying the entrypoint imports and boots cleanly with valid env (no config.yml mounted) =="
+          docker run --rm -e SLACK_TOKEN=dummy -e SLACK_CHANNEL=dummy packagist-tracker
