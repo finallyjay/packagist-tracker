@@ -2,16 +2,25 @@ version: 2
 updates:
   - package-ecosystem: pip
     directory: "/"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
     schedule:
       interval: weekly
 
   - package-ecosystem: docker
     directory: "/"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
     schedule:
       interval: weekly
 
   - package-ecosystem: github-actions
     directory: "/"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
     schedule:
       interval: weekly
 
@@ -25,5 +34,8 @@ updates:
   # match on both sides is still a manual step at review time.
   - package-ecosystem: pre-commit
     directory: "/"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
     schedule:
       interval: weekly
