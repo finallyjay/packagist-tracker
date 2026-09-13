@@ -4,6 +4,7 @@ import logging
 import os
 import re
 import sys
+from typing import Any
 
 import requests
 import yaml
@@ -209,7 +210,7 @@ def send_slack_message(package_name: str, current_version: str, repository_url: 
         "Content-Type": "application/json",
         "Authorization": f"Bearer {SLACK_TOKEN}",
     }
-    payload = {
+    payload: dict[str, Any] = {
         "channel": SLACK_CHANNEL,
         "blocks": [
             {
