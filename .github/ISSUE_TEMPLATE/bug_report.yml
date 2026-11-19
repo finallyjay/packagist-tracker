@@ -47,7 +47,7 @@ body:
     id: python-version
     attributes:
       label: Python version
-      placeholder: "3.9"
+      placeholder: "3.15"
 
   - type: dropdown
     id: environment
