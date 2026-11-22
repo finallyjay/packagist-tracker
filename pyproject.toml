@@ -4,7 +4,7 @@ version = "3.0.0"
 description = "Monitor PHP package versions on Packagist and send Slack notifications"
 readme = "README.md"
 license = { text = "MIT" }
-requires-python = ">=3.14"
+requires-python = ">=3.15"
 authors = [
     { name = "Jose Antonio Granero" },
 ]
@@ -14,7 +14,7 @@ dependencies = [
 ]
 
 [tool.ruff]
-target-version = "py314"
+target-version = "py315"
 line-length = 100
 
 [tool.ruff.lint]
@@ -30,7 +30,7 @@ select = [
 ]
 
 [tool.mypy]
-python_version = "3.14"
+python_version = "3.15"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
